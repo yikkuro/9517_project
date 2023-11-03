@@ -76,7 +76,7 @@ def elpv_reader_wrapper():
     return new_images, probs, types
 
 
-new_images, new_probs, new_types = elpv_reader_wrapper()
+# new_images, new_probs, new_types = elpv_reader_wrapper()
 
-cv2.imshow("test", new_images[46])
-cv2.waitKey(0)
+# cv2.imshow("test", new_images[46])
+# cv2.waitKey(0)
