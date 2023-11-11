@@ -2,31 +2,6 @@ import cv2
 import numpy as np
 import dataset.utils.elpv_reader as dataset_reader
 
-images, probs, types = dataset_reader.load_dataset()
-
-possible_probs = [1.0, 0.6666666666666666, 0.3333333333333333, 0.0]
-possible_types = ["mono", "poly"]
-
-
-def print_data_size(type: str, prob: float):
-    print(
-        f"{type} {prob}:",
-        len(
-            [
-                probs[i]
-                for i in range(len(probs))
-                if types[i] == type and probs[i] == prob
-            ]
-        ),
-    )
-
-
-print("data size:", len(probs))
-for type in possible_types:
-    print("--------")
-    for prob in possible_probs:
-        print_data_size(type, prob)
-
 
 def edge_detect(img):
     rv = img.copy()
@@ -63,20 +38,55 @@ def augment_img(img: np.ndarray, chance):
     return rv
 
 
-def elpv_reader_wrapper():
-    new_images = []
-    for image in images:
-        augmented_new_image = augment_img(image, 0.1)
-        new_images.append(
-            np.concatenate(
-                (edge_detect(augmented_new_image), shadow_detect(augmented_new_image)),
-                axis=1,
-            )
-        )
-    return new_images, probs, types
+def preprocess(img):
+    print(img)
+    return np.concatenate((shadow_detect(img), edge_detect(img)))
 
 
-# new_images, new_probs, new_types = elpv_reader_wrapper()
+def elpv_reader_wrapper(type="all"):
+    images, probs, types = dataset_reader.load_dataset()
+    split = 0.25
+    possible_probs = [0.0, 0.3333333333333333, 0.6666666666666666, 1.0]
+    label_map = [0, 1, 2, 3]
+    labels = [label_map[possible_probs.index(p)] for p in probs]
 
-# cv2.imshow("test", new_images[46])
-# cv2.waitKey(0)
+    test_mask = [False for _ in range(len(labels))]
+    for label in label_map:
+        new_mask = [False for _ in range(len(labels))]
+        for i in range(len(labels)):
+            if labels[i] == label and np.random.random() < split:
+                new_mask[i] = True
+        test_mask = [test_mask[i] or new_mask[i] for i in range(len(labels))]
+
+    images = [cv2.resize(image, (150, 150)) for image in images]
+
+    if type == "mono" or type == "poly":
+        images = [images[i] for i in range(len(images)) if types[i] == type]
+        labels = [labels[i] for i in range(len(labels)) if types[i] == type]
+
+    train_images = [images[i] for i in range(len(images)) if not test_mask[i]]
+    test_images = [images[i] for i in range(len(images)) if test_mask[i]]
+
+    train_labels = [labels[i] for i in range(len(labels)) if not test_mask[i]]
+    test_labels = [labels[i] for i in range(len(labels)) if test_mask[i]]
+
+    augment_chance = 0.5
+    duplicate = 3
+
+    new_train_images = []
+    new_train_labels = []
+    for i in range(len(train_images)):
+        if train_labels[i] == 2 or train_labels[i] == 1:
+            for _ in range(duplicate):
+                new_train_images.append(augment_img(train_images[i], augment_chance))
+                new_train_labels.append(train_labels[i])
+    train_images.extend(new_train_images)
+    train_labels.extend(new_train_labels)
+
+    for i in range(len(train_images)):
+        train_images[i] = preprocess(train_images[i])
+
+    for i in range(len(test_images)):
+        test_images[i] = preprocess(test_images[i])
+
+    return train_images, test_images, train_labels, test_labels
