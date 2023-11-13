@@ -1,6 +1,20 @@
 import cv2
 import numpy as np
 import dataset.utils.elpv_reader as dataset_reader
+from sklearn.model_selection import train_test_split
+from skimage import feature
+
+
+def extract_hog_features(image):
+    if image is not None:
+        hog_feature = feature.hog(
+            image,
+            orientations=9,
+            pixels_per_cell=(8, 8),
+            cells_per_block=(2, 2),
+            block_norm="L2-Hys",
+        )
+        return hog_feature
 
 
 def edge_detect(img):
@@ -38,37 +52,24 @@ def augment_img(img: np.ndarray, chance):
     return rv
 
 
-def preprocess(img):
-    print(img)
-    return np.concatenate((shadow_detect(img), edge_detect(img)))
+def manual_preprocess(img):
+    return cv2.resize((shadow_detect(img) + edge_detect(img)), (100, 100))
 
 
-def elpv_reader_wrapper(type="all"):
+def elpv_reader_wrapper(type="all", feature_extract_method="manual"):
     images, probs, types = dataset_reader.load_dataset()
     split = 0.25
     possible_probs = [0.0, 0.3333333333333333, 0.6666666666666666, 1.0]
     label_map = [0, 1, 2, 3]
     labels = [label_map[possible_probs.index(p)] for p in probs]
 
-    test_mask = [False for _ in range(len(labels))]
-    for label in label_map:
-        new_mask = [False for _ in range(len(labels))]
-        for i in range(len(labels)):
-            if labels[i] == label and np.random.random() < split:
-                new_mask[i] = True
-        test_mask = [test_mask[i] or new_mask[i] for i in range(len(labels))]
-
-    images = [cv2.resize(image, (150, 150)) for image in images]
-
     if type == "mono" or type == "poly":
         images = [images[i] for i in range(len(images)) if types[i] == type]
         labels = [labels[i] for i in range(len(labels)) if types[i] == type]
 
-    train_images = [images[i] for i in range(len(images)) if not test_mask[i]]
-    test_images = [images[i] for i in range(len(images)) if test_mask[i]]
-
-    train_labels = [labels[i] for i in range(len(labels)) if not test_mask[i]]
-    test_labels = [labels[i] for i in range(len(labels)) if test_mask[i]]
+    train_images, test_images, train_labels, test_labels = train_test_split(
+        images, labels, test_size=0.25, random_state=42, stratify=labels
+    )
 
     augment_chance = 0.5
     duplicate = 3
@@ -80,13 +81,26 @@ def elpv_reader_wrapper(type="all"):
             for _ in range(duplicate):
                 new_train_images.append(augment_img(train_images[i], augment_chance))
                 new_train_labels.append(train_labels[i])
-    train_images.extend(new_train_images)
-    train_labels.extend(new_train_labels)
+    train_images = np.concatenate((train_images, np.array(new_train_images)))
+    train_labels = np.concatenate((train_labels, np.array(new_train_labels)))
 
-    for i in range(len(train_images)):
-        train_images[i] = preprocess(train_images[i])
+    train_X = []
+    test_X = []
+    train_Y = train_labels
+    test_Y = test_labels
 
-    for i in range(len(test_images)):
-        test_images[i] = preprocess(test_images[i])
+    if feature_extract_method == "manual":
+        train_X = [
+            [pixel for row in manual_preprocess(image) for pixel in row]
+            for image in train_images
+        ]
+        test_X = [
+            [pixel for row in manual_preprocess(image) for pixel in row]
+            for image in test_images
+        ]
 
-    return train_images, test_images, train_labels, test_labels
+    elif feature_extract_method == "hog":
+        train_X = [extract_hog_features(image) for image in train_images]
+        test_X = [extract_hog_features(image) for image in test_images]
+
+    return train_X, test_X, train_Y, test_Y
